@@ -7,6 +7,17 @@ import {
 // Context oluşturma
 const WeatherContext = createContext();
 
+// localStorage'dan verileri yükleme yardımcı fonksiyonu
+const loadFromLocalStorage = (key, defaultValue) => {
+  try {
+    const savedData = localStorage.getItem(key);
+    return savedData ? JSON.parse(savedData) : defaultValue;
+  } catch (error) {
+    console.error(`Veri yüklenirken hata oluştu (${key}):`, error);
+    return defaultValue;
+  }
+};
+
 // Initial state
 const initialState = {
   city: "",
@@ -16,7 +27,8 @@ const initialState = {
   suggestions: [],
   showSuggestions: false,
   loading: false,
-  darkMode: false,
+  darkMode: loadFromLocalStorage("darkMode", false),
+  favorites: loadFromLocalStorage("favorites", []),
 };
 
 // Reducer fonksiyonu
@@ -40,6 +52,21 @@ function weatherReducer(state, action) {
       return { ...state, darkMode: !state.darkMode };
     case "SET_DARK_MODE":
       return { ...state, darkMode: action.payload };
+    case "SET_FAVORITES":
+      return { ...state, favorites: action.payload };
+    case "ADD_FAVORITE":
+      if (!state.favorites.some((fav) => fav.id === action.payload.id)) {
+        const updatedFavorites = [...state.favorites, action.payload];
+        localStorage.setItem("favorites", JSON.stringify(updatedFavorites));
+        return { ...state, favorites: updatedFavorites };
+      }
+      return state;
+    case "REMOVE_FAVORITE":
+      const filteredFavorites = state.favorites.filter(
+        (city) => city.id !== action.payload
+      );
+      localStorage.setItem("favorites", JSON.stringify(filteredFavorites));
+      return { ...state, favorites: filteredFavorites };
     default:
       return state;
   }
@@ -53,29 +80,34 @@ export function WeatherProvider({ children }) {
     "bd3b85402c2ec35dd3fc90a46c70966c";
   const GEOCODING_API_URL = "http://api.openweathermap.org/geo/1.0/direct";
 
-  // LocalStorage'dan tema tercihini yükleme
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("darkMode");
-    if (savedTheme !== null) {
-      dispatch({ type: "SET_DARK_MODE", payload: JSON.parse(savedTheme) });
-    }
-  }, []);
-
   // Tema değiştiğinde localStorage'a kaydetme
   useEffect(() => {
-    localStorage.setItem("darkMode", JSON.stringify(state.darkMode));
+    try {
+      localStorage.setItem("darkMode", JSON.stringify(state.darkMode));
 
-    // HTML body'sine dark/light class ekleme
-    if (state.darkMode) {
-      document.body.classList.add("dark-mode");
-    } else {
-      document.body.classList.remove("dark-mode");
+      if (state.darkMode) {
+        document.body.classList.add("dark-mode");
+      } else {
+        document.body.classList.remove("dark-mode");
+      }
+    } catch (error) {
+      console.error("Dark mode kaydedilirken hata oluştu:", error);
     }
   }, [state.darkMode]);
 
+  // Debug için - Favori değişikliklerini izleme
+  useEffect(() => {
+    console.log("Güncel favoriler:", state.favorites);
+  }, [state.favorites]);
+
+  // Loading state değişimini izleme (debug için)
+  useEffect(() => {
+    console.log("Loading state değişti:", state.loading);
+  }, [state.loading]);
+
   // API çağrıları ve diğer fonksiyonlar
   const getCitySuggestions = async (cityQuery) => {
-    if (cityQuery.length < 2) {
+    if (!cityQuery || cityQuery.length < 2) {
       dispatch({ type: "SET_SUGGESTIONS", payload: [] });
       return;
     }
@@ -103,6 +135,10 @@ export function WeatherProvider({ children }) {
       return;
     }
 
+    // Eğer zaten loading durumundaysa, çift istek önlemek için return
+    if (state.loading) return;
+
+    // Yükleniyor başlat
     dispatch({ type: "SET_LOADING", payload: true });
     dispatch({ type: "SET_ERROR", payload: "" });
 
@@ -110,6 +146,15 @@ export function WeatherProvider({ children }) {
       console.log("Hava durumu için istek gönderiliyor...");
       const data = await getWeatherByCity(selectedCity);
       console.log("Hava durumu verisi alındı:", data);
+
+      // Forecast verisi de alalım
+      try {
+        await fetchForecast(selectedCity);
+      } catch (forecastError) {
+        console.error("Forecast verisi alınamadı:", forecastError);
+        // Forecast hatası ana işlemi engellemeyecek
+      }
+
       dispatch({ type: "SET_WEATHER", payload: data });
       dispatch({ type: "SET_SHOW_SUGGESTIONS", payload: false });
     } catch (error) {
@@ -120,7 +165,10 @@ export function WeatherProvider({ children }) {
       });
       dispatch({ type: "SET_WEATHER", payload: null });
     } finally {
-      dispatch({ type: "SET_LOADING", payload: false });
+      // Yükleme bittiğinde hafif bir gecikme ekleyerek buğulama efektinin görünmesini sağla
+      setTimeout(() => {
+        dispatch({ type: "SET_LOADING", payload: false });
+      }, 500);
     }
   };
 
@@ -130,9 +178,8 @@ export function WeatherProvider({ children }) {
       return;
     }
 
-    dispatch({ type: "SET_LOADING", payload: true });
-
     try {
+      console.log("Tahmin verisi için istek gönderiliyor...");
       const data = await getForecastByCity(selectedCity);
       dispatch({ type: "SET_FORECAST", payload: data });
     } catch (error) {
@@ -141,9 +188,9 @@ export function WeatherProvider({ children }) {
         type: "SET_ERROR",
         payload: "Hava durumu tahmini alınamadı.",
       });
-    } finally {
-      dispatch({ type: "SET_LOADING", payload: false });
     }
+    // fetchForecast için loading state'ini değiştirmiyoruz, çünkü
+    // ana işlem fetchWeather'dan sonra yapılıyor
   };
 
   const setCity = (city) => {
@@ -159,6 +206,29 @@ export function WeatherProvider({ children }) {
     dispatch({ type: "TOGGLE_DARK_MODE" });
   };
 
+  // Favori ekleme fonksiyonu
+  const addFavorite = () => {
+    if (state.weather) {
+      const favorite = {
+        id: state.weather.id,
+        name: state.weather.name,
+        country: state.weather.sys.country,
+      };
+      dispatch({ type: "ADD_FAVORITE", payload: favorite });
+    }
+  };
+
+  // Favori silme fonksiyonu
+  const removeFavorite = (cityId) => {
+    dispatch({ type: "REMOVE_FAVORITE", payload: cityId });
+  };
+
+  // Favorilerden şehir seçme
+  const selectFavorite = (cityName) => {
+    setCity(cityName);
+    fetchWeather(cityName);
+  };
+
   // Context değeri
   const value = {
     ...state,
@@ -168,6 +238,9 @@ export function WeatherProvider({ children }) {
     fetchWeather,
     fetchForecast,
     toggleDarkMode,
+    addFavorite,
+    removeFavorite,
+    selectFavorite,
   };
 
   return (
