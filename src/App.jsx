@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import {
   WiDaySunny,
   WiRain,
@@ -6,88 +6,39 @@ import {
   WiSnow,
   WiThunderstorm,
 } from "react-icons/wi";
-import axios from "axios";
+import { FaMoon, FaSun } from "react-icons/fa";
 import "./App.css";
+import { useWeather } from "./context/WeatherContext";
 
 function App() {
-  const [city, setCity] = useState("");
-  const [weather, setWeather] = useState(null);
-  const [error, setError] = useState("");
-  const [suggestions, setSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  const API_KEY =
-    import.meta.env.VITE_OPENWEATHER_API_KEY ||
-    "bd3b85402c2ec35dd3fc90a46c70966c";
-  const API_URL = "https://api.openweathermap.org/data/2.5/weather";
-  const GEOCODING_API_URL = "http://api.openweathermap.org/geo/1.0/direct";
+  const {
+    city,
+    weather,
+    error,
+    suggestions,
+    showSuggestions,
+    loading,
+    darkMode,
+    setCity,
+    setShowSuggestions,
+    getCitySuggestions,
+    fetchWeather,
+    toggleDarkMode,
+  } = useWeather();
 
   useEffect(() => {
-    const getCitySuggestions = async () => {
-      if (city.length < 2) {
-        setSuggestions([]);
-        return;
-      }
-
-      try {
-        console.log("Şehir önerileri için istek gönderiliyor...");
-        const response = await axios.get(GEOCODING_API_URL, {
-          params: {
-            q: city,
-            limit: 5,
-            appid: API_KEY,
-          },
-        });
-        console.log("Öneriler alındı:", response.data);
-        setSuggestions(response.data);
-      } catch (error) {
-        console.error("Şehir önerileri alınamadı:", error);
-        setError("Şehir önerileri alınamadı. Lütfen tekrar deneyin.");
-      }
-    };
-
     const timer = setTimeout(() => {
-      getCitySuggestions();
+      if (city) {
+        getCitySuggestions(city);
+      }
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [city]);
-
-  const getWeather = async (selectedCity = city) => {
-    if (!selectedCity) {
-      setError("Lütfen bir şehir adı girin.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      console.log("Hava durumu için istek gönderiliyor...");
-      const response = await axios.get(API_URL, {
-        params: {
-          q: selectedCity,
-          appid: API_KEY,
-          units: "metric",
-          lang: "tr",
-        },
-      });
-      console.log("Hava durumu verisi alındı:", response.data);
-      setWeather(response.data);
-      setShowSuggestions(false);
-    } catch (error) {
-      console.error("Hava durumu alınamadı:", error);
-      setError("Şehir bulunamadı. Lütfen geçerli bir şehir adı girin.");
-      setWeather(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [city, getCitySuggestions]);
 
   const handleSuggestionClick = (suggestion) => {
     setCity(suggestion.name);
-    getWeather(suggestion.name);
+    fetchWeather(suggestion.name);
   };
 
   const getWeatherIcon = (weatherMain) => {
@@ -110,6 +61,10 @@ function App() {
   return (
     <div className="container">
       <div className="app">
+        <button onClick={toggleDarkMode} className="theme-switch">
+          {darkMode ? <FaSun className="icon" /> : <FaMoon className="icon" />}
+        </button>
+
         <h1>Hava Durumu Uygulaması</h1>
 
         <div className="search-container">
@@ -122,7 +77,7 @@ function App() {
                 setCity(e.target.value);
                 setShowSuggestions(true);
               }}
-              onKeyPress={(e) => e.key === "Enter" && getWeather()}
+              onKeyPress={(e) => e.key === "Enter" && fetchWeather()}
               className="search-input"
             />
             {showSuggestions && suggestions.length > 0 && (
@@ -139,7 +94,7 @@ function App() {
             )}
           </div>
           <button
-            onClick={() => getWeather()}
+            onClick={() => fetchWeather()}
             className="search-button"
             disabled={loading}>
             {loading ? "Yükleniyor..." : "Ara"}
